@@ -37,15 +37,10 @@ class AuctionEmulatorEnv(gym.Env):
         """
         self._load_config()
         self._step = 1
-        fields =    [
-                    'weekday',
-                    'hour',
-                    'auction_type',
-                    'bidprice',
-                    'slotprice',
-                    'payprice',
-                    'click_prob'
-                    ]
+        fields = ['click', 'weekday', 'hour', 'bidid', 'timestamp', 'logtype', 'ipinyouid', 'useragent',
+        'IP', 'region', 'city', 'adexchange', 'domain', 'url', 'urlid', 'slotid', 'slotwidth', 'slotheight',
+        'slotvisibility', 'slotformat', 'slotprice', 'creative', 'bidprice', 'payprice', 'keypage',
+        'advertiser', 'usertag']
         self.bid_requests = pd.read_csv(self.file_in, sep="\t", usecols=fields)
         self.total_bids = len(self.bid_requests)
         self.bid_line = {}
@@ -53,18 +48,15 @@ class AuctionEmulatorEnv(gym.Env):
     def _get_observation(self, bid_req):
         observation = {}
         if bid_req is not None:
-            observation['weekday'] = bid_req['weekday']
-            observation['hour'] = bid_req['hour']
-            observation['auction_type'] = bid_req['auction_type']
-            observation['slotprice'] = bid_req['slotprice']
-            observation['click_prob'] = bid_req['click_prob']
+            for feature in bid_req.index.values:
+                observation[feature] = bid_req[feature]
         return observation
 
     def _bid_state(self, bid_req):
-        self.auction_type = bid_req['auction_type']
+        self.auction_type = 'SECOND_PRICE'
         self.bidprice = bid_req['bidprice']
         self.payprice = bid_req['payprice']
-        self.click_prob = bid_req['click_prob']
+        self.click_prob = bid_req['click']
         self.slotprice = bid_req['slotprice']
 
     def reset(self):
