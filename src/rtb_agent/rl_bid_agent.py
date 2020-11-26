@@ -33,14 +33,14 @@ class RlBidAgent():
         self._load_config()
         # Control parameter used to scale bid price
         self.BETA = [-0.08, -0.03, -0.01, 0, 0.01, 0.03, 0.08]
-        self.eps_start = 0.95
+        self.eps_start = 0.9
         self.eps_end = 0.05
         self.anneal = 0.00005
         self._reset_episode()
         # DQN Network to learn Q function
-        self.dqn_agent = Agent(state_size = 7, action_size=7, seed =0)
+        self.dqn_agent = Agent(state_size = self.STATE_SIZE, action_size=self.ACTION_SIZE, seed =0)
         # Reward Network to reward function
-        self.reward_net = RewardNet(state_action_size = 8, reward_size=1, seed =0)
+        self.reward_net = RewardNet(state_action_size = self.STATE_SIZE + 1, reward_size=1, seed =0)
         self.dqn_state = None
         self.dqn_action = 3 # no scaling
         self.dqn_reward = 0
@@ -66,7 +66,7 @@ class RlBidAgent():
                                           #       (self.prev_budget - self.running_budget) / self.cur_wins
         self.WR = 0                       # 6. wins_e / total_impressions
         self._reset_step()                # 7. Total value of the winning impressions 'click_prob'
-        self.cur_day = 1
+        self.cur_day = 0
         self.cur_hour = 0
         self.ctl_lambda = 1.0  # Lambda sequential regulation parameter
         self.wins_e = 0  
@@ -80,7 +80,7 @@ class RlBidAgent():
         """
         self.t_step += 1
         self.prev_budget = self.rem_budget
-        self.rem_budget -= (self.cost_t / 1e9)
+        self.rem_budget -= (self.cost_t / 1e9) #1e9 should go?
         self.ROL -= 1
         self.BCR = (self.rem_budget - self.prev_budget) / self.prev_budget
         self.CPM = self.cost_t
@@ -94,7 +94,7 @@ class RlBidAgent():
         self.cost_t = 0.
         self.wins_t = 0
         self.bids_t = 0
-        self.eps = max(self.eps_start - self.anneal * self.t_step, 0.05)
+        self.eps = max(0.95 - self.anneal * self.t_step, 0.05)
     
     def _update_reward_cost(self, reward, cost):
         """
@@ -133,13 +133,17 @@ class RlBidAgent():
         # within the episode, changing the time step
         elif state['hour'] != self.cur_hour and state['weekday'] == self.cur_day:
             self._update_step()
-            # Sample a mini batch and perform grad-descent step
-            self.reward_net.step()
-            dqn_next_state = self._get_state()
+            self.reward_net.step() # update reward net
+            dqn_next_state = self._get_state() # observe state s_t
+
+            # ADD CONCAT DQN_NEXT_STATE AND STATE? (merging dataset vars (-click) and the derived state vars)
+
+            # get action a_t (adjusting lambda_t-1 to lambda_t) from the adaptive greedy policy
             a_beta = self.dqn_agent.act(dqn_next_state, eps=self.eps)
             sa = np.append(self.dqn_state, self.dqn_action)
-            rnet_r = float(self.reward_net.act(sa))
+            rnet_r = float(self.reward_net.act(sa)) # get reward r_t from RewardNet
             # call agent step
+            # Sample a mini batch and perform grad-descent step
             self.dqn_agent.step(self.dqn_state, self.dqn_action, rnet_r, dqn_next_state, episode_done)
             self.dqn_state = dqn_next_state
             self.dqn_action = a_beta
@@ -166,11 +170,12 @@ class RlBidAgent():
 
         # action = bid amount
         # send the best estimate of the bid
+        # 1e9 should go?
         self.budget_spend += (cost / 1e9)
         if cost > 0:
             self.wins_t += 1
             self.wins_e += 1
-        action = min(self.ctl_lambda * self.target_value * state['click_prob'] * 1e9,
+        action = min(self.ctl_lambda * self.target_value * state['click'] * 1e9,
                         (self.budget - self.budget_spend) * 1e9)
         return action
 
@@ -190,7 +195,7 @@ def main():
 
     while not done:
         # action = bid amount
-        action = agent.act(obs, reward, cost)
+        action = agent.act(obs, reward, cost) # obs = state
         next_obs, reward, cost, done = env.step(action)
         obs = next_obs # Next state assigned to current state
         # done = agent.done()

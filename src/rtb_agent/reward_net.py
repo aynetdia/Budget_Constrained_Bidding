@@ -61,7 +61,7 @@ class RewardNet():
         # Save experience in replay memory
         # self.memory.add(state, action, reward)
         # If enough samples are available in memory, get random subset and learn
-        if len(self.memory) > 1:
+        if len(self.memory) > BATCH_SIZE:
             experiences = self.memory.sample()
             self.learn(experiences)
 
