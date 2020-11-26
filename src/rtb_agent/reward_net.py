@@ -16,6 +16,7 @@ import torch.optim as optim
 BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 32         # minibatch size
 LR = 1e-3               # learning rate 
+MOMENTUM = 0.95         # momentum
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -37,7 +38,7 @@ class RewardNet():
 
         # Reward-Network
         self.reward_net = Network(state_action_size, reward_size, seed).to(device)
-        self.optimizer = optim.Adam(self.reward_net.parameters(), lr=LR)
+        self.optimizer = optim.SGD(self.reward_net.parameters(), lr=LR, momentum=MOMENTUM)
 
         # Replay memory
         self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, seed)
