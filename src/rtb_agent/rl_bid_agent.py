@@ -199,11 +199,11 @@ def main():
         obs = next_obs # Next state assigned to current state
         # done = agent.done()
 
-    PATH_1 = os.getcwd()+'\src\model\_reward_ml.pt'
+    PATH_1 = os.getcwd()+'\models\_reward_ml.pt'
     print("final trained rewardNet has been writen into "+PATH_1)
     torch.save(agent.reward_net.reward_net.state_dict(), PATH_1)
 
-    PATH_2 = os.getcwd() + '\src\model\_DQN.pt'
+    PATH_2 = os.getcwd() + '\models\_DQN.pt'
     print("final trained DQN has been writen into " + PATH_2)
     torch.save({'local_model': agent.dqn_agent.qnetwork_local.state_dict(),
                 'target_model':agent.dqn_agent.qnetwork_target.state_dict()},
