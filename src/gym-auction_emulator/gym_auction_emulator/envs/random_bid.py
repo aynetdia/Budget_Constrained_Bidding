@@ -65,8 +65,7 @@ def main():
         wins1=rb.total_bids
         wins2=sum(rb.df['wins'])
         click2=sum(rb.df.loc[rb.df['wins']==1]['click'])
-        print(click1)
-        print(click2)
+      
         print("Total actual random winning Impressions = {} clicks = {} \n;".format(wins1,click1),
               "Total random winning Impressions = {} clicks = {}".format(wins2, click2))
 
