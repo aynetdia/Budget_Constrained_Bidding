@@ -16,10 +16,9 @@ import torch.optim as optim
 BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 32         # minibatch size
 GAMMA = 1.0             # discount factor
-TAU = 1e-3              # for soft update of target parameters
 LR = 1e-3               # learning rate 
 MOMENTUM = 0.95         # momentum
-UPDATE_EVERY = 4        # how often to update the network
+UPDATE_EVERY = 25       # how often to update the network
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -52,12 +51,10 @@ class Agent():
     def step(self, state, action, reward, next_state, done):
         # Save experience in replay memory
         self.memory.add(state, action, reward, next_state, done)
+        self.t_step = state[0]
         
-        # Learn every UPDATE_EVERY time steps.
-        self.t_step = (self.t_step + 1) % UPDATE_EVERY
-        if self.t_step == 0:
-            # If enough samples are available in memory, get random subset and learn
-            # if len(self.memory) > BATCH_SIZE:
+        # If enough samples are available in memory, get random subset and learn
+        if len(self.memory) > BATCH_SIZE:
             experiences = self.memory.sample()
             self.learn(experiences, GAMMA)
 
@@ -76,10 +73,17 @@ class Agent():
         self.qnetwork_local.train()
 
         # Epsilon-greedy action selection
-        if random.random() > eps:
+        # Check if the Q-value distribution is unimodal or not
+        max_q = np.max(action_values.cpu().data.numpy())
+        # If not unimodal, randomly choose an action with p = max(eps, 0.5)
+        if np.count_nonzero(action_values == max_q) > 1:
+            prob = max(eps, 0.5)
+            if random.random() <= prob:
+                return random.choice(np.arange(self.action_size))
+            else: # and with 1-p choose an action regularly 
+                return np.argmax(action_values.cpu().data.numpy())
+        else: # if unimodal, choose an action regularly 
             return np.argmax(action_values.cpu().data.numpy())
-        else:
-            return random.choice(np.arange(self.action_size))
 
     def learn(self, experiences, gamma):
         """Update value parameters using given batch of experience tuples.
@@ -106,21 +110,9 @@ class Agent():
         loss.backward()
         self.optimizer.step()
 
-        # ------------------- update target network ------------------- #
-        self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)                     
-
-    def soft_update(self, local_model, target_model, tau):
-        """Soft update model parameters.
-        θ_target = τ*θ_local + (1 - τ)*θ_target
-        Params
-        ======
-            local_model (PyTorch model): weights will be copied from
-            target_model (PyTorch model): weights will be copied to
-            tau (float): interpolation parameter 
-        """
-        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
-            target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
-
+        # Every C steps reset Q target = Q (hard copy)
+        if ((self.t_step + 1) % UPDATE_EVERY) == 0:
+            self.qnetwork_target.parameters() = self.qnetwork_local.parameters()
 
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
