@@ -66,8 +66,9 @@ class AuctionEmulatorEnv(gym.Env):
         self._step = 1
         bid_req = self.bid_requests.iloc[self._step]
         self._bid_state(bid_req)
+        first_obs = self._get_observation(bid_req)
         # observation, reward, cost, done
-        return self._get_observation(bid_req), 0.0, 0.0, False
+        return first_obs, first_obs['click'], first_obs['payprice'], False
 
     def step(self, action):
         """
@@ -76,36 +77,18 @@ class AuctionEmulatorEnv(gym.Env):
         Reward is computed using the bidprice to payprice difference.
         """
         done = False
-        r = 0.0 # immediate reward
-        r_p = 0.0 # temp reward
-        c = 0.0 # cost for the bid impression
-
-        if self.metric == 'clicks':
-            r_p = self.click_prob
-        else:
-            raise ValueError(f"Invalid metric type: {self.metric}")
-
-        mkt_price = max(self.slotprice, self.payprice)
-        if action > mkt_price:
-            if self.auction_type == 'SECOND_PRICE':
-                r = r_p
-                c = mkt_price
-            elif self.auction_type == 'FIRST_PRICE':
-                r = r_p
-                c = action
-            else:
-                raise ValueError(f"Invalid auction type: {self.auction_type}")
-
-        next_bid = None
-        if self._step < self.total_bids - 1:
-            next_bid = self.bid_requests.iloc[self._step]
-            self._bid_state(next_bid)
-        else:
-            done = True
-
         self._step += 1
 
-        return self._get_observation(next_bid), r, c, done
+        next_bid = self.bid_requests.iloc[self._step]
+        self._bid_state(next_bid)
+        next_obs = self._get_observation(next_bid)
+        next_r = next_obs['click']
+        next_c = next_obs['payprice']
+
+        if self._step > self.total_bids - 1:
+            done = True
+
+        return next_obs, next_r, next_c, done
 
     def render(self, mode='human', close=False):
         pass
