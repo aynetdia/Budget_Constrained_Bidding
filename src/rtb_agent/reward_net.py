@@ -44,8 +44,9 @@ class RewardNet():
         self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, seed)
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
-        #Reward dict
-        self.M = defaultdict()
+        self.M = defaultdict() # reward dict
+        self.S = []
+        self.V = 0
 
     def add(self, state_action, reward):
         # Save experience in replay memory
