@@ -10,7 +10,7 @@ from collections import namedtuple, deque
 from model import Network
 
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
 import torch.optim as optim
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
@@ -47,14 +47,15 @@ class Agent():
         self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, seed)
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
+        self.loss = 0
     
-    def step(self, state, action, reward, next_state, done):
+    def step(self, state, action, reward, next_state, eval_flag):
         # Save experience in replay memory
-        self.memory.add(state, action, reward, next_state, done)
+        self.memory.add(state, action, reward, next_state)
         self.t_step = state[0]
         
         # If enough samples are available in memory, get random subset and learn
-        if len(self.memory) > BATCH_SIZE:
+        if len(self.memory) > BATCH_SIZE and eval_flag == False:
             experiences = self.memory.sample()
             self.learn(experiences, GAMMA)
 
@@ -74,16 +75,16 @@ class Agent():
 
         # Epsilon-greedy action selection
         # Check if the Q-value distribution is unimodal or not
-        max_q = np.max(action_values.cpu().data.numpy())
+        #if np.count_nonzero(action_values == max_q) > 1:
+        if unimodal_check(action_values) == True:
+            return np.argmax(action_values.cpu().data.numpy())
         # If not unimodal, randomly choose an action with p = max(eps, 0.5)
-        if np.count_nonzero(action_values == max_q) > 1:
+        else: # if unimodal, choose an action regularly 
             prob = max(eps, 0.5)
             if random.random() <= prob:
                 return random.choice(np.arange(self.action_size))
             else: # and with 1-p choose an action regularly 
                 return np.argmax(action_values.cpu().data.numpy())
-        else: # if unimodal, choose an action regularly 
-            return np.argmax(action_values.cpu().data.numpy())
 
     def learn(self, experiences, gamma):
         """Update value parameters using given batch of experience tuples.
@@ -94,25 +95,57 @@ class Agent():
         """
         states, actions, rewards, next_states, dones = experiences
 
-        # Get max predicted Q values (for next states) from target model
-        Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
-        # Compute Q targets for current states 
-        Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
+        if next_states[2] == 0:
+            y = rewards
+        else:
+            y = rewards + gamma * self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
+
+        # # Get max predicted Q values (for next states) from target model
+        # Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
+        # # Compute Q targets for current states 
+        # Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
 
         # Get expected Q values from local model
         Q_expected = self.qnetwork_local(states).gather(1, actions)
 
         # Compute loss
-        loss = F.mse_loss(Q_expected, Q_targets)
-        print("DQN loss = {}".format(loss))
+        self.loss = nn.MSELoss(Q_expected, y)
+        print("DQN loss = {}".format(self.loss))
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-
         # Every C steps reset Q target = Q (hard copy)
         if ((self.t_step + 1) % UPDATE_EVERY) == 0:
-            self.qnetwork_target.parameters() = self.qnetwork_local.parameters()
+            for target_param, local_param in zip(self.qnetwork_target.parameters(), self.qnetwork_local.parameters()):
+                target_param.data.copy_(local_param.data)
+
+    def unimodal_check(self, action_values):
+        """
+        This function checks if the array of action-values is unimodal using
+        some heuristic tests.
+        :param action_values: predicted Q values for each action (sorted by default)
+        :return: boolean variable describing whether the distribution of values
+        in the action-value array is unimodal or "abnormal".
+        """
+        end = len(action_values)
+        i = 1
+        if max(action_values) == action_values[0] or max(action_values) == action_values[-1]:
+            while i < end and action_values[i-1] > action_values[i]:
+                i += 1
+            while i < end and action_values[i-1] == action_values[i]:
+                i += 1
+            while i < end and action_values[i-1] < action_values[i]:
+                i += 1
+            return i == end
+        else:
+            while i < end and action_values[i-1] < action_values[i]:
+                i += 1
+            while i < end and action_values[i-1] == action_values[i]:
+                i += 1
+            while i < end and action_values[i-1] > action_values[i]:
+                i += 1
+            return i == end
 
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
@@ -127,26 +160,24 @@ class ReplayBuffer:
         """
         self.memory = deque(maxlen=buffer_size)  
         self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
+        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state"])
         self.seed = random.seed(seed)
     
-    def add(self, state, action, reward, next_state, done):
+    def add(self, state, action, reward, next_state):
         """Add a new experience to memory."""
-        e = self.experience(state, action, reward, next_state, done)
+        e = self.experience(state, action, reward, next_state)
         self.memory.append(e)
     
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
-        k = min(self.batch_size, len(self.memory))
-        experiences = random.sample(self.memory, k=k)
+        experiences = random.sample(self.memory, k=self.batch_size)
 
         states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
         actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).long().to(device)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
         next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
   
-        return (states, actions, rewards, next_states, dones)
+        return (states, actions, rewards, next_states)
 
     def __len__(self):
         """Return the current size of internal memory."""
