@@ -6,6 +6,7 @@
 import numpy as np
 import random
 from collections import namedtuple, deque, defaultdict
+from lru import LRU
 
 from model import Network
 
@@ -44,9 +45,10 @@ class RewardNet():
         self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, seed)
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
-        self.M = defaultdict() # reward dict
+        self.M = LRU(BUFFER_SIZE) # reward dict
         self.S = []
         self.V = 0
+        self.loss = 0
 
     def add(self, state_action, reward):
         # Save experience in replay memory
@@ -54,15 +56,15 @@ class RewardNet():
     
     def add_to_M(self, sa, reward):
         self.M[sa] = reward
+        if len(M) >= BUFFER_SIZE:
+            del M[M.peek_last_item()[0]] # discard LRU key
 
     def get_from_M(self, sa):
         return(self.M.get(sa, 0))
 
-    def step(self):
-        # Save experience in replay memory
-        # self.memory.add(state, action, reward)
+    def step(self, eval_flag):
         # If enough samples are available in memory, get random subset and learn
-        if len(self.memory) > BATCH_SIZE:
+        if len(self.memory) > BATCH_SIZE and eval_flag == False:
             experiences = self.memory.sample()
             self.learn(experiences)
 
@@ -75,10 +77,7 @@ class RewardNet():
             eps (float): epsilon, for epsilon-greedy action selection
         """
         sa = torch.from_numpy(state_action).float().unsqueeze(0).to(device)
-        # self.reward_net.eval()
-        # with torch.no_grad():
-        #     action_values = self.reward_net(state)
-        # self.reward_net.train()
+
         return(self.reward_net(sa))
 
     def learn(self, experiences):
@@ -94,7 +93,7 @@ class RewardNet():
         R_pred = self.reward_net(state_actions)
 
         # Compute loss
-        loss = F.mse_loss(R_pred, rewards)
+        self.loss = F.mse_loss(R_pred, rewards)
         print("RewardNet loss = {}".format(loss))
         # Minimize the loss
         self.optimizer.zero_grad()
@@ -125,8 +124,7 @@ class ReplayBuffer:
     
     def sample(self):
         """Randomly sample a batch of experiences from memory."""
-        k = min(self.batch_size, len(self.memory))
-        experiences = random.sample(self.memory, k=k)
+        experiences = random.sample(self.memory, k=self.batch_size)
 
         state_actions = torch.from_numpy(np.vstack([e.state_action for e in experiences if e is not None])).float().to(device)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
