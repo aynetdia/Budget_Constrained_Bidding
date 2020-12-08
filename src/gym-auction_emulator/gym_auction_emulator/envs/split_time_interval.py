@@ -13,7 +13,7 @@ import pandas as pd
 # an additional column in like ‘day’ or ‘hour’ with values 00, 15, 30 and 45
 class Split:
         def get_time_interval(data):
-                time_inv=int(data[11:13])
+                time_inv=int(data[10:12])
                 if time_inv>=0 and time_inv<15:
                         return ("00")
                 elif time_inv >= 15 and time_inv < 30:
@@ -28,7 +28,7 @@ class Split:
 
 # #bid_requests["usertag"]
 # bid_requests["timestamp"]=bid_requests["timestamp"].apply(str)
-# bid_requests["minute"]=bid_requests["timestamp"].apply(get_time_interval)
+# bid_requests["minute"]=bid_requests["timestamp"].apply(lambda row : get_time_interval(row['timestamp']), axis = 1)
 #
 #
 # print(bid_requests[["timestamp","timeinterval"]])

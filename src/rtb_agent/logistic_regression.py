@@ -55,7 +55,7 @@ class Logistic_Regression():
 
     ## Check data set , check NAs
 
-    bid_requests['usertag'] = bid_requests['usertag'].fillna(0) #replace NAs with 0
+    bid_requests['usertag'] = bid_requests['usertag'].fillna("0,") #replace NAs with 0
 
     ## Transform datatypes
     def compute_categories_dummy (data, clmn):
