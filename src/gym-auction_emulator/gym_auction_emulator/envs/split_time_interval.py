@@ -28,7 +28,7 @@ class Split:
 
 # #bid_requests["usertag"]
 # bid_requests["timestamp"]=bid_requests["timestamp"].apply(str)
-# bid_requests["minute"]=bid_requests["timestamp"].apply(lambda row : get_time_interval(row['timestamp']), axis = 1)
+# bid_requests["minute"]=bid_requests.apply(lambda row : get_time_interval(row['timestamp']), axis = 1)
 #
 #
 # print(bid_requests[["timestamp","timeinterval"]])
