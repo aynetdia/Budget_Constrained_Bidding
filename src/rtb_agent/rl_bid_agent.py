@@ -40,7 +40,6 @@ class RlBidAgent():
         self.global_T = 0
         self.episode_budgets = None
         self.budget = None
-        self.reward_t = 0
         self.step_memory = []
         self.episode_memory = []
         # DQN Network to learn Q function
@@ -48,17 +47,13 @@ class RlBidAgent():
         # Reward Network to learn the reward function
         self.reward_net = RewardNet(state_action_size = 8, reward_size = 1)
         self.dqn_action = 3 # first action - no adjustment
-        self.total_wins = 0
-        self.total_rewards = 0
-        self.rewards_prev_t = 0
-        self.total_cost = 0
 
     def _reset_episode(self):
         """
         Function to reset the state when episode changes
         """
         # Lambda sequential regulation parameter
-        self.ctl_lambda = 0.001 if self.budget is None else self.calc_greedy(self.greedy_memory, self.budget)
+        self.ctl_lambda = 0.0005 if self.budget is None else self.calc_greedy(self.greedy_memory, self.budget)
         print("LAMBDA: ", self.ctl_lambda)
         self.greedy_memory = []
         self._reset_step()
@@ -72,11 +67,16 @@ class RlBidAgent():
         self.rewards_e = 0
         self.reward_net.V = 0
         self.reward_net.S = []
+        self.total_wins = 0
+        self.total_rewards = 0
+        self.rewards_prev_t = 0
+        self.total_cost = 0
 
     def _update_step(self):
         """
         Function that is called before transitioning into step t+1 (updates state t)
         """
+        self.global_T += 1
         self.t_step += 1
         self.prev_budget = self.rem_budget # Bt-1
         self.rem_budget = self.budget - self.budget_spent # Bt (2. the remaining budget at time-step t)
@@ -156,12 +156,12 @@ class RlBidAgent():
             self.cur_state = next_state # set state t+1 as state t (in order call it during next transition)
             self.dqn_action = a_beta # analogously with the action t+1
             self.cur_min = obs['min'] 
-            self.global_T += 1
             # save state, action, lambda, epsilon, rewardnet history here
             self.step_memory.append([self.global_T, self.rem_budget, self.ctl_lambda, self.eps, a_beta, self.dqn_agent.loss, rnet_r, self.reward_net.loss])
             self._reset_step()
         # transition to next episode
         elif obs['weekday'] != self.cur_day:
+            self._update_step()
             for (s, a) in self.reward_net.S:
                 sa = tuple(np.append(s, a))
                 max_r = max(self.reward_net.get_from_M(sa), self.reward_net.V)
@@ -209,57 +209,76 @@ class RlBidAgent():
         return opt_lambda
 
 
-# def main():
-#     # Instantiate the Environment and Agent
-#     env = gym.make('AuctionEmulator-v0')
-#     env.seed(0)
-#     agent = RlBidAgent()
+def main():
+    # Instantiate the Environment and Agent
+    env = gym.make('AuctionEmulator-v0')
+    env.seed(0)
+    agent = RlBidAgent()
 
-#     obs, done = env.reset()
-#     train_budget = env.bid_requests.payprice.sum()/8
+    # obs, done = env.reset()
+    # train_budget = env.bid_requests.payprice.sum()/4
 
-#     budget_proportions = []
-#     for episode in env.bid_requests.weekday.unique():
-#         budget_proportions.append(len(env.bid_requests[env.bid_requests.weekday == episode])/env.total_bids)
-#     for i in range(len(budget_proportions)):
-#         budget_proportions[i] = round(train_budget * budget_proportions[i])
-#     agent.episode_budgets = budget_proportions
-#     agent._reset_episode()
-#     agent.cur_day = obs['weekday']
-#     agent.cur_hour = obs['hour']
-#     agent.cur_state = agent._get_state() # observe state s_0
+    # budget_proportions = []
+    # for episode in env.bid_requests.weekday.unique():
+    #     budget_proportions.append(len(env.bid_requests[env.bid_requests.weekday == episode])/env.total_bids)
+    # for i in range(len(budget_proportions)):
+    #     budget_proportions[i] = round(train_budget * budget_proportions[i])
+    # agent.episode_budgets = budget_proportions
+    # agent._reset_episode()
+    # agent.cur_day = obs['weekday']
+    # agent.cur_hour = obs['hour']
+    # agent.cur_state = agent._get_state() # observe state s_0
 
-#     epochs = 400
+    epochs = 50
 
-#     for epoch in range(epochs):
-#         while not done:
-#             bid = agent.act(obs) # obs = state
-#             next_obs, cur_reward, cur_cost, win, done = env.step(bid)
-#             agent._update_reward_cost(bid, cur_reward, cur_cost, win)
-#             obs = next_obs
-#         print("Total Impressions won {} value = {}".format(agent.total_wins, agent.total_rewards))
-#         if ((epoch + 1) % 20) == 0:
-#             PATH = 'models/model_state_{}.tar'.format(epoch)
-#             torch.save({'local_q_model': agent.dqn_agent.qnetwork_local.state_dict(),
-#                         'target_q_model':agent.dqn_agent.qnetwork_target.state_dict(),
-#                         'q_optimizer':agent.dqn_agent.optimizer.state_dict(),
-#                         'rnet': agent.reward_net.reward_net.state_dict(),
-#                         'rnet_optimizer': agent.reward_net.optimizer.state_dict()}, PATH)
+    for epoch in range(epochs):
 
-#             f = open('models/rnet_memory_{}.txt'.format(epoch), "wb")
-#             cloudpickle.dump(agent.dqn_agent.memory, f)
-#             f.close()
-#             f = open('models/rdqn_memory_{}.txt'.format(epoch), "wb")
-#             cloudpickle.dump(agent.reward_net.memory, f)
-#             f.close()
+        print("Epoch: ", epoch+1)
 
-#             pd.DataFrame(agent.step_memory).to_csv('models/step_history_{}.csv'.format(epoch),header=None,index=False)
-#             agent.step_memory=[]
-#             pd.DataFrame(agent.episode_memory).to_csv('models/episode_history_{}.csv'.format(epoch),header=None,index=False)
-#             agent.step_memory=[]
+        obs, done = env.reset()
+        train_budget = env.bid_requests.payprice.sum()/4
 
-#     env.close()
+        budget_proportions = []
+        for episode in env.bid_requests.weekday.unique():
+            budget_proportions.append(len(env.bid_requests[env.bid_requests.weekday == episode])/env.total_bids)
+        for i in range(len(budget_proportions)):
+            budget_proportions[i] = round(train_budget * budget_proportions[i])
+        agent.episode_budgets = budget_proportions
+        agent._reset_episode()
+        agent.cur_day = obs['weekday']
+        agent.cur_hour = obs['hour']
+        agent.cur_state = agent._get_state() # observe state s_0
+
+        while not done:
+            bid = agent.act(obs) # obs = state
+            next_obs, cur_reward, cur_cost, win, done = env.step(bid)
+            agent._update_reward_cost(bid, cur_reward, cur_cost, win)
+            obs = next_obs
+        print("Total Impressions won {} value = {}".format(agent.total_wins, agent.total_rewards))
+        if ((epoch + 1) % 10) == 0:
+            PATH = 'models/model_state_{}.tar'.format(epoch+1)
+            torch.save({'local_q_model': agent.dqn_agent.qnetwork_local.state_dict(),
+                        'target_q_model':agent.dqn_agent.qnetwork_target.state_dict(),
+                        'q_optimizer':agent.dqn_agent.optimizer.state_dict(),
+                        'rnet': agent.reward_net.reward_net.state_dict(),
+                        'rnet_optimizer': agent.reward_net.optimizer.state_dict()}, PATH)
+
+            f = open('models/rnet_memory_{}.txt'.format(epoch+1), "wb")
+            cloudpickle.dump(agent.dqn_agent.memory, f)
+            f.close()
+            f = open('models/rdqn_memory_{}.txt'.format(epoch+1), "wb")
+            cloudpickle.dump(agent.reward_net.memory, f)
+            f.close()
+
+            pd.DataFrame(agent.step_memory).to_csv('models/step_history_{}.csv'.format(epoch+1),header=None,index=False)
+            agent.step_memory=[]
+            pd.DataFrame(agent.episode_memory).to_csv('models/episode_history_{}.csv'.format(epoch+1),header=None,index=False)
+            agent.episode_memory=[]
+
+        print("EPOCH ENDED")
+
+    env.close()
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
