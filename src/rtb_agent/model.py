@@ -9,12 +9,15 @@ Budget Constrained Bidding by Model-free Reinforcement Learning in Display Adver
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+import os
+import random
 
 
 class Network(nn.Module):
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, seed, fc1_units=100, 
+    def __init__(self, state_size, action_size, fc1_units=100, 
                     fc2_units=100, fc3_units=100):
         """Initialize parameters and build model.
         Params
@@ -26,7 +29,7 @@ class Network(nn.Module):
             fc2_units (int): Number of nodes in second hidden layer
         """
         super(Network, self).__init__()
-        self.seed = torch.manual_seed(seed)
+        set_seed()
         self.fc1 = nn.Linear(state_size, fc1_units)
         self.fc2 = nn.Linear(fc1_units, fc2_units)
         self.fc3 = nn.Linear(fc2_units, fc3_units)
@@ -38,3 +41,12 @@ class Network(nn.Module):
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         return self.fc4(x)
+
+def set_seed():
+  os.environ['PYTHONHASHSEED'] = str(0)
+  random.seed(0)
+  np.random.seed(0)
+  torch.manual_seed(0)
+  torch.cuda.manual_seed_all(0)
+  torch.backends.cudnn.deterministic = True
+  torch.backends.cudnn.benchmark = False

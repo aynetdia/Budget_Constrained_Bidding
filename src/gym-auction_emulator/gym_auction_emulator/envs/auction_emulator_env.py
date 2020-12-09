@@ -36,12 +36,12 @@ class AuctionEmulatorEnv(gym.Env):
         Populates the bid requests to self.bid_requests list.
         """
         self._load_config()
-        self._step = 1
-        fields = ['click', 'weekday', 'hour', 'min', 'bidid', 'timestamp', 'logtype', 'ipinyouid', 'useragent',
+        fields = ['click', 'pCTR', 'weekday', 'hour', 'min', 'bidid', 'timestamp', 'logtype', 'ipinyouid', 'useragent',
         'IP', 'region', 'city', 'adexchange', 'domain', 'url', 'urlid', 'slotid', 'slotwidth', 'slotheight',
         'slotvisibility', 'slotformat', 'slotprice', 'creative', 'bidprice', 'payprice', 'keypage',
         'advertiser', 'usertag']
         self.bid_requests = pd.read_csv(self.file_in, sep="\t", usecols=fields)
+        self.bid_requests = self.bid_requests.sort_values(by=['weekday', 'hour', 'min'])
         self.total_bids = len(self.bid_requests)
         self.bid_line = {}
 
@@ -53,41 +53,48 @@ class AuctionEmulatorEnv(gym.Env):
         return observation
 
     def _bid_state(self, bid_req):
-        self.bidprice = bid_req['bidprice']
+        # self.bidprice = bid_req['bidprice']
         self.payprice = bid_req['payprice']
-        self.click_prob = bid_req['click']
+        self.click = bid_req['click']
         self.slotprice = bid_req['slotprice']
 
     def reset(self):
         """
         Reset the OpenAI Gym Auction Emulator environment.
         """
-        self._step = 1
+        self._step = 0
         bid_req = self.bid_requests.iloc[self._step]
         self._bid_state(bid_req)
         first_obs = self.get_observation(bid_req)
         # observation, reward, cost, done
-        return first_obs, first_obs['click'], first_obs['payprice'], False
+        return first_obs, False # first_obs['click'], first_obs['payprice'], False
 
     def step(self, action):
         """
         Args:
             action: bid response (bid_price)
-        Reward is computed using the bidprice to payprice difference.
         """
+        r = 0
+        c = 0
+        win = False
         done = False
-        self._step += 1
+
+        mkt_price = max(self.slotprice, self.payprice)
+        if action > mkt_price:
+            r = self.click
+            c = mkt_price
+            win = True
 
         next_bid = self.bid_requests.iloc[self._step]
         self._bid_state(next_bid)
         next_obs = self.get_observation(next_bid)
-        next_r = next_obs['click']
-        next_c = next_obs['payprice']
 
-        if self._step > self.total_bids - 1:
+        if self._step >= (self.total_bids - 1):
             done = True
 
-        return next_obs, next_r, next_c, done
+        self._step += 1
+
+        return next_obs, r, c, win, done
 
     def render(self, mode='human', close=False):
         pass

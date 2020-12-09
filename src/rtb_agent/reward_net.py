@@ -4,27 +4,27 @@
 # gamma is set to 1
 
 import numpy as np
+import os
 import random
 from collections import namedtuple, deque, defaultdict
 from lru import LRU
 
-from model import Network
+from model import Network, set_seed
 
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
 import torch.optim as optim
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 32         # minibatch size
 LR = 1e-3               # learning rate 
-MOMENTUM = 0.95         # momentum
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class RewardNet():
     """Interacts with and learns from the environment."""
 
-    def __init__(self, state_action_size, reward_size, seed):
+    def __init__(self, state_action_size, reward_size):
         """Initialize an RewardNet object.
         
         Params
@@ -35,14 +35,15 @@ class RewardNet():
         """
         self.state_action_size = state_action_size
         self.reward_size = reward_size
-        self.seed = random.seed(seed)
+        set_seed()
 
         # Reward-Network
-        self.reward_net = Network(state_action_size, reward_size, seed).to(device)
-        self.optimizer = optim.SGD(self.reward_net.parameters(), lr=LR, momentum=MOMENTUM)
+        self.reward_net = Network(state_action_size, reward_size).to(device)
+        self.optimizer = optim.Adam(self.reward_net.parameters(), lr=LR)
+        self.criterion = nn.MSELoss()
 
         # Replay memory
-        self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, seed)
+        self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, 0)
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
         self.M = LRU(BUFFER_SIZE) # reward dict
@@ -56,8 +57,8 @@ class RewardNet():
     
     def add_to_M(self, sa, reward):
         self.M[sa] = reward
-        if len(M) >= BUFFER_SIZE:
-            del M[M.peek_last_item()[0]] # discard LRU key
+        if len(self.M) >= BUFFER_SIZE:
+            del self.M[self.M.peek_last_item()[0]] # discard LRU key
 
     def get_from_M(self, sa):
         return(self.M.get(sa, 0))
@@ -84,7 +85,7 @@ class RewardNet():
         """Update value parameters using given batch of experience tuples.
         Params
         ======
-            experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples 
+            experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s') tuples 
             gamma (float): discount factor
         """
         state_actions, rewards = experiences
@@ -93,12 +94,14 @@ class RewardNet():
         R_pred = self.reward_net(state_actions)
 
         # Compute loss
-        self.loss = F.mse_loss(R_pred, rewards)
+        loss = self.criterion(R_pred, rewards)
         print("RewardNet loss = {}".format(loss))
         # Minimize the loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+        self.loss = loss.item()
 
 
 class ReplayBuffer:
@@ -115,7 +118,7 @@ class ReplayBuffer:
         self.memory = deque(maxlen=buffer_size)  
         self.batch_size = batch_size
         self.experience = namedtuple("Experience", field_names=["state_action", "reward"])
-        self.seed = random.seed(seed)
+        random.seed(seed)
     
     def add(self, state_action, reward):
         """Add a new experience to memory."""
