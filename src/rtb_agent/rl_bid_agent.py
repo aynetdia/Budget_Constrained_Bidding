@@ -3,8 +3,6 @@ sys.path.append(os.getcwd()+'/src/gym-auction_emulator')
 import gym, gym_auction_emulator
 import random
 from operator import itemgetter
-import pickle
-import typedload
 import torch
 import numpy as np
 from collections import deque
