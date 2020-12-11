@@ -31,7 +31,6 @@ class RewardNet():
         ======
             state_size (int): dimension of each state
             action_size (int): dimension of each action
-            seed (int): random seed
         """
         self.state_action_size = state_action_size
         self.reward_size = reward_size
@@ -44,11 +43,11 @@ class RewardNet():
 
         # Replay memory
         self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, 0)
-        # Initialize time step (for updating every UPDATE_EVERY steps)
-        self.t_step = 0
-        self.M = LRU(BUFFER_SIZE) # reward dict
+        # Reward dict - LRFU implementation not found, therefore just LRU
+        self.M = LRU(BUFFER_SIZE)
         self.S = []
         self.V = 0
+        # Initialize loss for tracking the progress
         self.loss = 0
 
     def add(self, state_action, reward):
@@ -56,26 +55,25 @@ class RewardNet():
         self.memory.add(state_action, reward)
     
     def add_to_M(self, sa, reward):
+        # Add records to the reward dict
         self.M[sa] = reward
         if len(self.M) >= BUFFER_SIZE:
             del self.M[self.M.peek_last_item()[0]] # discard LRU key
 
     def get_from_M(self, sa):
+        # Retrieve items from M
         return(self.M.get(sa, 0))
 
-    def step(self, eval_flag):
+    def step(self):
         # If enough samples are available in memory, get random subset and learn
-        if len(self.memory) > BATCH_SIZE and eval_flag == False:
+        if len(self.memory) > BATCH_SIZE:
             experiences = self.memory.sample()
             self.learn(experiences)
 
     def act(self, state_action):
         """Returns actions for given state as per current policy.
-        
-        Params
-        ======
+
             state (array_like): current state
-            eps (float): epsilon, for epsilon-greedy action selection
         """
         sa = torch.from_numpy(state_action).float().unsqueeze(0).to(device)
 
@@ -83,10 +81,8 @@ class RewardNet():
 
     def learn(self, experiences):
         """Update value parameters using given batch of experience tuples.
-        Params
-        ======
-            experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s') tuples 
-            gamma (float): discount factor
+
+            experiences (Tuple[torch.Tensor]): tuple of (sa, r) tuples 
         """
         state_actions, rewards = experiences
 
@@ -96,11 +92,11 @@ class RewardNet():
         # Compute loss
         loss = self.criterion(R_pred, rewards)
         print("RewardNet loss = {}".format(loss))
-        # Minimize the loss
+        # Grad descent
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-
+        # Keep track of the loss for the history
         self.loss = loss.item()
 
 

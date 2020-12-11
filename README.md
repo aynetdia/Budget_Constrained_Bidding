@@ -1,5 +1,5 @@
 # Ad Tech Budget Constrained Real-Time Bidding (RTB)
-This repo contains the Budget Constrained Real-Time Bidding Open AI Gym environment and Agents for Display Advertising Technology (Ad Tech). There are two agents trained for comparison. One is a Liner Bidding Agent and another one is a Model-free Reinforcement Learning(RL) based agent. The model-free RL agent is based on the paper from Wu et al. I have included the iPinYou and Fake dataset to run the models.
+This repo contains the implementation of the DRLB framework introduced by Wu et al. (2018).
 
 ## Ad Exchange Open AI Gym environment
 
@@ -7,32 +7,13 @@ Open AI Gym environment mimics the Ad Exchange by taking the bid requests from t
 
 ### Configuration parameters
 
-Set the `dataset_path` to the absolute data set path location.
-<br />Set `metrics` to impressions, views, clicks, installs, conversions etc. 
-
-
-## Reinforcement Learning (RL) Agent
-The RL agent models the state by spilitting the entire day (24 Hours) into time steps, T, typically 15 minutes.
-
-
-### Configuration paraemters
-Set `T` to the time step duration.
-<br />Set `ACTION_SIZE` to the number of discrete positive and negative steps to control the bid impression price. 
-
-[Here](http://bit.ly/AdTechRTB) are the slides for RTB project.
-
----
+Set the `src/gym_auction_emulator/gym_auction_emulator/envs/config.cfg` accordingly to training or testing mode. Currently it is set to testing mode to allow for tunning the evaluation of the DRLB by our peers.
 
 ## How to Use:
 
-Note: The code was used with a private dataset from large mobile DSP company.
-I removed all the instances to the private dataset and added iPinYou public dataset.
-iPinYou does not have all the required columns and this code may not run.
-If you are adapting this code for your projects and have questions. Drop me an [email](venkatc77@gmail.com).
+It is set up in such a way that training and (most importantly) testing works from the notebook. 
 
-Use the following command to run the Linear Bidding Agent.
-<br />
-```bash scripts/run_lin_bid.sh```
+However, the training of the DRLB can also be done from the console by executing either the sh script as specified below or running the src/rl_bid_agent.py script as a python script. In both latter cases the main method in the script should be uncommented.
 
 Use the following command to run the RL Bidding Agent.
 <br />```bash scripts/run_rl_bid.sh```

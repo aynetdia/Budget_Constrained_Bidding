@@ -18,7 +18,7 @@ BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 32         # minibatch size
 GAMMA = 1.0             # discount factor
 LR = 1e-3               # learning rate 
-UPDATE_EVERY = 100       # how often to update the network
+C = 100       # how often to update the network
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -27,9 +27,7 @@ class DQN():
 
     def __init__(self, state_size, action_size):
         """Initialize an Agent object.
-        
-        Params
-        ======
+
             state_size (int): dimension of each state
             action_size (int): dimension of each action
         """
@@ -44,27 +42,25 @@ class DQN():
         self.criterion = nn.MSELoss()
 
         # Replay memory
-        self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, 0)
-        # Initialize time step (for updating every UPDATE_EVERY steps)
+        self.memory = ReplayBuffer(BUFFER_SIZE, BATCH_SIZE, seed=0)
+        # Track time step for updating Q_target every C = 100 steps
         self.t_step = 0
         self.loss = 0
     
-    def step(self, state, action, reward, next_state, eval_flag):
+    def step(self, state, action, reward, next_state):
         # Save experience in replay memory
         self.memory.add(state, action, reward, next_state)
         self.t_step = state[0]
-        terminal = state[2]
+        terminal = state[2] # get ROL
         
         # If enough samples are available in memory, get random subset and learn
-        if len(self.memory) > BATCH_SIZE and eval_flag == False:
+        if len(self.memory) > BATCH_SIZE:
             experiences = self.memory.sample()
             self.learn(experiences, GAMMA, terminal)
 
-    def act(self, state, eps=0.):
+    def act(self, state, eps, eval_flag):
         """Returns actions for given state as per current policy.
-        
-        Params
-        ======
+
             state (array_like): current state
             eps (float): epsilon, for epsilon-greedy action selection
         """
@@ -74,46 +70,51 @@ class DQN():
             action_values = self.qnetwork_local(state)[0] # [0] 'cause otherwise nested array
         self.qnetwork_local.train()
 
-        # Epsilon-greedy action selection
-        # Check if the Q-value distribution is unimodal or not
-        #if np.count_nonzero(action_values == max_q) > 1:
-        if self.unimodal_check(action_values) == True:
+        if eval_flag == 0:
+            # Epsilon-greedy action selection
+            # Check if the Q-value distribution is unimodal, if so:
+            if self.unimodal_check(action_values) == True:
+                if random.random() <= eps:
+                    # choose action randomly with prob epsilon
+                    return random.choice(np.arange(self.action_size))
+                else: # and a regular action with 1-eps
+                    return np.argmax(action_values.cpu().data.numpy())
+            # If not unimodal, increase epsilon, if it's small
+            else:
+                prob = max(eps, 0.5)
+                if random.random() <= prob:
+                    return random.choice(np.arange(self.action_size))
+                else: # and with 1-p choose an action regularly 
+                    return np.argmax(action_values.cpu().data.numpy())
+        else:
             return np.argmax(action_values.cpu().data.numpy())
-        # If not unimodal, randomly choose an action with p = max(eps, 0.5)
-        else: # if unimodal, choose an action regularly 
-            prob = max(eps, 0.5)
-            if random.random() <= prob:
-                return random.choice(np.arange(self.action_size))
-            else: # and with 1-p choose an action regularly 
-                return np.argmax(action_values.cpu().data.numpy())
 
     def learn(self, experiences, gamma, terminal):
         """Update value parameters using given batch of experience tuples.
-        Params
-        ======
+
             experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s') tuples 
             gamma (float): discount factor
         """
         states, actions, rewards, next_states = experiences
 
-        if terminal == 0:
+        if terminal == 1: # if the next state is the last one in the episode
             y = rewards
         else:
             y = rewards + gamma * self.qnetwork_target(next_states).max(1, keepdim=True)[0]
 
         # Get Q values from local model
-        Q_expected = self.qnetwork_local(states).gather(1, actions)
+        Q_local = self.qnetwork_local(states).gather(1, actions)
 
         # Compute loss
-        loss = self.criterion(Q_expected, y)
+        loss = self.criterion(Q_local, y)
         print("DQN loss = {}".format(loss))
-        # Minimize the loss
+        # Grad descent
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
         self.loss = loss.item()
         # Every C steps reset Q target = Q (hard copy)
-        if ((self.t_step + 1) % UPDATE_EVERY) == 0:
+        if ((self.t_step + 1) % C) == 0:
             for target_param, local_param in zip(self.qnetwork_target.parameters(), self.qnetwork_local.parameters()):
                 target_param.data.copy_(local_param.data)
 
@@ -121,6 +122,9 @@ class DQN():
         """
         This function checks if the array of action-values is unimodal using
         some heuristic tests.
+
+        Borrowed from https://github.com/ostigg/dqn-rtb/blob/master/e_greedy_policy.py
+
         :param action_values: predicted Q values for each action (sorted by default)
         :return: boolean variable describing whether the distribution of values
         in the action-value array is unimodal or "abnormal".

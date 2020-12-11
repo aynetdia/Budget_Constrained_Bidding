@@ -26,14 +26,14 @@ class AuctionEmulatorEnv(gym.Env):
         env_dir = os.path.dirname(__file__)
         cfg.read(env_dir + '/config.cfg')
         self.data_src = cfg['data']['dtype']
-        if self.data_src == 'ipinyou':
-            self.file_in = env_dir + str(cfg['data']['ipinyou_path'])
-        self.metric = str(cfg['data']['metric'])
+        if self.data_src == 'train': # get dataset path
+            self.file_in = env_dir + str(cfg['data']['train_path'])
+        else:
+            self.file_in = env_dir + str(cfg['data']['test_path'])
 
     def __init__(self):
         """
-        Args:
-        Populates the bid requests to self.bid_requests list.
+        Initialize the environment
         """
         self._load_config()
         fields = ['click', 'pCTR', 'weekday', 'hour', 'min', 'bidid', 'timestamp', 'logtype', 'ipinyouid', 'useragent',
@@ -66,8 +66,8 @@ class AuctionEmulatorEnv(gym.Env):
         bid_req = self.bid_requests.iloc[self._step]
         self._bid_state(bid_req)
         first_obs = self.get_observation(bid_req)
-        # observation, reward, cost, done
-        return first_obs, False # first_obs['click'], first_obs['payprice'], False
+
+        return first_obs, False # obs, done
 
     def step(self, action):
         """
@@ -80,9 +80,10 @@ class AuctionEmulatorEnv(gym.Env):
         done = False
 
         mkt_price = max(self.slotprice, self.payprice)
+
         if action > mkt_price:
             r = self.click
-            c = mkt_price
+            c = mkt_price # Since we're in the second price auction
             win = True
 
         next_bid = self.bid_requests.iloc[self._step]
