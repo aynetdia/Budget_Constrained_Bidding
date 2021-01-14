@@ -19,7 +19,8 @@ BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 32         # minibatch size
 LR = 1e-3               # learning rate 
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 
 class RewardNet():
     """Interacts with and learns from the environment."""

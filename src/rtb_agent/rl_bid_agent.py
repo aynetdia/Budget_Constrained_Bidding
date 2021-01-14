@@ -11,9 +11,9 @@ import cloudpickle
 import configparser
 from dqn import DQN
 from reward_net import RewardNet
+from model import set_seed
 import numpy as np
 import pandas as pd
-from model import set_seed
 
 
 class RlBidAgent():
@@ -42,6 +42,7 @@ class RlBidAgent():
         self.T = 96
         # Initialize the DQN action for t=0 (index 3 - no adjustment of lambda, 0 ind self.BETA)
         self.dqn_action = 3
+        self.ctl_lambda = None
         # Arrays saving the training history
         self.step_memory = []
         self.episode_memory = []
@@ -75,7 +76,7 @@ class RlBidAgent():
         # Reset the count of time steps
         self.t_step = 0
         # Lambda regulation parameter - set according to the greedy approximation algorithm, as suggested by the paper
-        self.ctl_lambda = 0.0005 if self.budget is None else self.calc_greedy(self.greedy_memory, self.budget)
+        # self.ctl_lambda = 0.01 if self.budget is None else self.calc_greedy(self.greedy_memory, self.budget)
         # Clean up the array used to save all the necessary information to solve the knapsack problem with the GA algo
         self.greedy_memory = []
         # Next episode -> next step
@@ -143,36 +144,29 @@ class RlBidAgent():
             self.total_rewards += reward
             self.cost_t += cost
 
-    def _train_step(self):
-        self.reward_net.step() # update reward net
-        next_state = self._get_state() # observe state s_t+1 (state at the beginning of t+1)
+    def _model_upd(self, eval_mode):
+        if not eval_mode:
+            self.reward_net.step() # update reward net
 
+        next_state = self._get_state() # observe state s_t+1 (state at the beginning of t+1)
         # get action a_t+1 (adjusting lambda_t to lambda_t+1) from the adaptive greedy policy
-        a_beta = self.dqn_agent.act(next_state, eps=self.eps, eval_flag=False)
+        a_beta = self.dqn_agent.act(next_state, eps=self.eps, eval_mode=eval_mode)
         self.ctl_lambda *= (1 + self.BETA[a_beta])
 
-        # updates for the RewardNet
-        sa = np.append(self.cur_state, self.dqn_action) # state-action pair for t
-        self.rnet_r = float(self.reward_net.act(sa)) # get reward r_t from RewardNet
-        self.reward_net.V += self.reward_t
-        self.reward_net.S.append((self.cur_state, self.dqn_action))
+        if not eval_mode:
+            # updates for the RewardNet
+            sa = np.append(self.cur_state, self.dqn_action) # state-action pair for t
+            self.rnet_r = float(self.reward_net.act(sa)) # get reward r_t from RewardNet
+            self.reward_net.V += self.reward_t
+            self.reward_net.S.append((self.cur_state, self.dqn_action))
 
-        # Store in D1 and sample a mini batch and perform grad-descent step
-        self.dqn_agent.step(self.cur_state, self.dqn_action, self.rnet_r, next_state)
-        self.cur_state = next_state # set state t+1 as state t
-        self.dqn_action = a_beta # analogously with the action t+1
-
-    def _eval_step(self):
-        next_state = self._get_state() # observe state s_t+1 (state at the beginning of t+1)
-
-        # get action a_t+1 (adjusting lambda_t to lambda_t+1) from the adaptive greedy policy
-        a_beta = self.dqn_agent.act(next_state, eps=self.eps, eval_flag=1)
-        self.ctl_lambda *= (1 + self.BETA[a_beta])
+            # Store in D1 and sample a mini batch and perform grad-descent step
+            self.dqn_agent.step(self.cur_state, self.dqn_action, self.rnet_r, next_state)
 
         self.cur_state = next_state # set state t+1 as state t
         self.dqn_action = a_beta # analogously with the action t+1
 
-    def act(self, obs):
+    def act(self, obs, eval_mode):
         """
         This function gets called with every bid request.
         By looking at the weekday and hour to progress between the steps and
@@ -186,64 +180,26 @@ class RlBidAgent():
         # within the episode, changing the time step
         elif obs['min'] != self.cur_min and obs['weekday'] == self.cur_day:
             self._update_step()
-            self._train_step()
+            self._model_upd(eval_mode)
             self.cur_min = obs['min'] 
             # save history
-            self.step_memory.append([self.global_T, self.rem_budget, self.ctl_lambda, self.eps, self.dqn_action, self.dqn_agent.loss, self.rnet_r, self.reward_net.loss])
+            self.step_memory.append([self.global_T, int(self.rem_budget), self.ctl_lambda, self.eps, self.dqn_action, self.dqn_agent.loss, self.rnet_r, self.reward_net.loss])
             self._reset_step()
         # transition to next episode
         elif obs['weekday'] != self.cur_day:
             self._update_step()
-            self._train_step()
-            self.step_memory.append([self.global_T, self.rem_budget, self.ctl_lambda, self.eps, self.dqn_action, self.dqn_agent.loss, self.rnet_r, self.reward_net.loss])
+            self._model_upd(eval_mode)
+            self.step_memory.append([self.global_T, int(self.rem_budget), self.ctl_lambda, self.eps, self.dqn_action, self.dqn_agent.loss, self.rnet_r, self.reward_net.loss])
             # Updates for the RewardNet at the end of each episode (only when training)
-            for (s, a) in self.reward_net.S:
-                sa = tuple(np.append(s, a))
-                max_r = max(self.reward_net.get_from_M(sa), self.reward_net.V)
-                self.reward_net.add_to_M(sa, max_r)
-                self.reward_net.add(sa, max_r)
-            print("Episode Result with Step={} Budget={} Spend={} wins={} rewards={}".format(self.global_T, self.budget, self.budget_spent_e, self.wins_e, self.rewards_e))
+            if not eval_mode:
+                for (s, a) in self.reward_net.S:
+                    sa = tuple(np.append(s, a))
+                    max_r = max(self.reward_net.get_from_M(sa), self.reward_net.V)
+                    self.reward_net.add_to_M(sa, max_r)
+                    self.reward_net.add(sa, max_r)
+            print("Episode Result with Step={} Budget={} Spend={} wins={} rewards={}".format(self.global_T, self.budget, int(self.budget_spent_e), self.wins_e, self.rewards_e))
             # Save history
-            self.episode_memory.append([self.budget, self.budget_spent_e, self.wins_e, self.rewards_e])
-            self._reset_episode() 
-            self.cur_day = obs['weekday']
-            self.cur_min = obs['min']
-
-        self.imp_opps_t += 1
-        bid = self.calc_bid(obs['pCTR'])
-
-        self.greedy_memory.append([obs['pCTR'], obs['payprice'], obs['pCTR']/max(obs['payprice'], 1)])
-
-        return bid
-
-    def eval_act(self, obs):
-        """
-        This function gets called with every bid request.
-        By looking at the weekday and hour to progress between the steps and
-        episodes during training.
-        Returns the bid decision based on the scaled version of the
-        bid price using the DQN agent output.
-        """
-        # within the time step
-        if obs['min'] == self.cur_min and obs['weekday'] == self.cur_day:
-            pass
-        # within the episode, changing the time step
-        elif obs['min'] != self.cur_min and obs['weekday'] == self.cur_day:
-            self._update_step()
-            self._eval_step()
-            self.cur_min = obs['min'] 
-            # save history
-            self.step_memory.append([self.global_T, self.rem_budget, self.ctl_lambda, self.eps, self.dqn_action, self.dqn_agent.loss, self.rnet_r, self.reward_net.loss])
-            self._reset_step()
-        # transition to next episode
-        elif obs['weekday'] != self.cur_day:
-            self._update_step()
-            self._eval_step()
-            self.step_memory.append([self.global_T, self.rem_budget, self.ctl_lambda, self.eps, self.dqn_action, self.dqn_agent.loss, self.rnet_r, self.reward_net.loss])
-            # Updates for the RewardNet at the end of each episode (only when training)
-            print("Episode Result with Step={} Budget={} Spend={} wins={} rewards={}".format(self.global_T, self.budget, self.budget_spent_e, self.wins_e, self.rewards_e))
-            # Save history
-            self.episode_memory.append([self.budget, self.budget_spent_e, self.wins_e, self.rewards_e])
+            self.episode_memory.append([self.budget, int(self.budget_spent_e), self.wins_e, self.rewards_e])
             self._reset_episode() 
             self.cur_day = obs['weekday']
             self.cur_min = obs['min']
@@ -275,7 +231,7 @@ class RlBidAgent():
         items_sorted = sorted(items, key=itemgetter(2), reverse=True)
         while len(items_sorted) > 0:
             item = items_sorted.pop()
-            if item[0] + spending <= budget_limit:
+            if item[1] + spending <= budget_limit: # should be item[1], currently adds pCTR instead of price?????
                 bids.append(item)
                 spending += bids[-1][1]
                 ctr += bids[-1][0]
@@ -287,72 +243,69 @@ class RlBidAgent():
         opt_lambda = np.max(np.divide(ctrs, costs))
         return opt_lambda
 
-### The main method is used to train the model from the console. If you wish to do so, just uncomment the code below
-### And run this script as a python script from the folder budget_constrained_bidding
+
+def main():
+    # Instantiate the Environment and Agent
+    env = gym.make('AuctionEmulator-v0')
+    env.seed(0)
+    set_seed()
+    agent = RlBidAgent()
+
+    train_budget = env.bid_requests.payprice.sum()/4
+    # Set budgets for each episode
+    budget_proportions = []
+    for episode in env.bid_requests.weekday.unique():
+        budget_proportions.append(len(env.bid_requests[env.bid_requests.weekday == episode])/env.total_bids)
+    print(env.bid_requests.weekday.unique())
+    for i in range(len(budget_proportions)):
+        budget_proportions[i] = round(train_budget * budget_proportions[i])
+
+    epochs = 400
+
+    for epoch in range(epochs):
+
+        print("Epoch: ", epoch+1)
+        obs, done = env.reset()
+        agent.episode_budgets = budget_proportions.copy()
+        agent.ctl_lambda = 0.01
+        agent._reset_episode()
+        agent.cur_day = obs['weekday']
+        agent.cur_hour = obs['hour']
+        agent.cur_state = agent._get_state() # observe state s_0
+
+        while not done: # iterate through the whole dataset
+            bid = agent.act(obs, eval_mode=False) # Call agent action given each bid request from the env
+            next_obs, cur_reward, cur_cost, win, done = env.step(bid) # Get information from the environment based on the agent's action
+            agent._update_reward_cost(bid, cur_reward, cur_cost, win) # Agent receives reward and cost from the environment
+            obs = next_obs
+        print("Episode Result with Step={} Budget={} Spend={} wins={} rewards={}".format(agent.global_T, agent.budget, int(agent.budget_spent_e), agent.wins_e, agent.rewards_e))
+        agent.episode_memory.append([agent.budget, int(agent.budget_spent_e), agent.wins_e, agent.rewards_e])
+
+        # Saving models and history
+        if ((epoch + 1) % 1) == 0:
+            PATH = 'models/model_state_{}.tar'.format(epoch+1)
+            torch.save({'local_q_model': agent.dqn_agent.qnetwork_local.state_dict(),
+                        'target_q_model':agent.dqn_agent.qnetwork_target.state_dict(),
+                        'q_optimizer':agent.dqn_agent.optimizer.state_dict(),
+                        'rnet': agent.reward_net.reward_net.state_dict(),
+                        'rnet_optimizer': agent.reward_net.optimizer.state_dict()}, PATH)
+
+            f = open('models/rnet_memory_{}.txt'.format(epoch+1), "wb")
+            cloudpickle.dump(agent.dqn_agent.memory, f)
+            f.close()
+            f = open('models/rdqn_memory_{}.txt'.format(epoch+1), "wb")
+            cloudpickle.dump(agent.reward_net.memory, f)
+            f.close()
+
+            pd.DataFrame(agent.step_memory).to_csv('models/step_history_{}.csv'.format(epoch+1),header=None,index=False)
+            agent.step_memory=[]
+            pd.DataFrame(agent.episode_memory).to_csv('models/episode_history_{}.csv'.format(epoch+1),header=None,index=False)
+            agent.episode_memory=[]
+
+        print("EPOCH ENDED")
+
+    env.close() # Close the environment when done
 
 
-# def main():
-#     # Instantiate the Environment and Agent
-#     # env = gym.make('AuctionEmulator-v0')
-#     # env.seed(0)
-#     # agent = RlBidAgent()
-
-#     # epochs = 200
-
-#     # set_seed()
-
-#     # for epoch in range(epochs):
-
-#     #     print("Epoch: ", epoch+1)
-
-#     #     obs, done = env.reset()
-#     #     train_budget = env.bid_requests.payprice.sum()/4
-#     #     # Set budgets for each episode
-#     #     budget_proportions = []
-#     #     for episode in env.bid_requests.weekday.unique():
-#     #         budget_proportions.append(len(env.bid_requests[env.bid_requests.weekday == episode])/env.total_bids)
-#     #     for i in range(len(budget_proportions)):
-#     #         budget_proportions[i] = round(train_budget * budget_proportions[i])
-#     #     agent.episode_budgets = budget_proportions
-
-#     #     agent._reset_episode()
-#     #     agent.cur_day = obs['weekday']
-#     #     agent.cur_hour = obs['hour']
-#     #     agent.cur_state = agent._get_state() # observe state s_0
-
-#     #     while not done: # iterate through the whole dataset
-#     #         bid = agent.act(obs, eval_flag=False) # Call agent action given each bid request from the env
-#     #         next_obs, cur_reward, cur_cost, win, done = env.step(bid) # Get information from the environment based on the agent's action
-#     #         agent._update_reward_cost(bid, cur_reward, cur_cost, win) # Agent receives reward and cost from the environment
-#     #         obs = next_obs
-#     #     print("Episode Result with Step={} Budget={} Spend={} wins={} rewards={}".format(agent.global_T, agent.budget, agent.budget_spent_e, agent.wins_e, agent.rewards_e))
-#     #     agent.episode_memory.append([agent.budget, agent.budget_spent_e, agent.wins_e, agent.rewards_e])
-
-#     #     # Saving models and history
-#     #     if ((epoch + 1) % 10) == 0:
-#     #         PATH = 'models/model_state_{}.tar'.format(epoch+1)
-#     #         torch.save({'local_q_model': agent.dqn_agent.qnetwork_local.state_dict(),
-#     #                     'target_q_model':agent.dqn_agent.qnetwork_target.state_dict(),
-#     #                     'q_optimizer':agent.dqn_agent.optimizer.state_dict(),
-#     #                     'rnet': agent.reward_net.reward_net.state_dict(),
-#     #                     'rnet_optimizer': agent.reward_net.optimizer.state_dict()}, PATH)
-
-#     #         f = open('models/rnet_memory_{}.txt'.format(epoch+1), "wb")
-#     #         cloudpickle.dump(agent.dqn_agent.memory, f)
-#     #         f.close()
-#     #         f = open('models/rdqn_memory_{}.txt'.format(epoch+1), "wb")
-#     #         cloudpickle.dump(agent.reward_net.memory, f)
-#     #         f.close()
-
-#     #         pd.DataFrame(agent.step_memory).to_csv('models/step_history_{}.csv'.format(epoch+1),header=None,index=False)
-#     #         agent.step_memory=[]
-#     #         pd.DataFrame(agent.episode_memory).to_csv('models/episode_history_{}.csv'.format(epoch+1),header=None,index=False)
-#     #         agent.episode_memory=[]
-
-#     #     print("EPOCH ENDED")
-
-#     # env.close() # Close the environment when done
-
-
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()

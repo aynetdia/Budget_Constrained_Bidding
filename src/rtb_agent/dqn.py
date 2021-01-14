@@ -20,7 +20,8 @@ GAMMA = 1.0             # discount factor
 LR = 1e-3               # learning rate 
 C = 100       # how often to update the network
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 
 class DQN():
     """Interacts with and learns from the environment."""
@@ -58,7 +59,7 @@ class DQN():
             experiences = self.memory.sample()
             self.learn(experiences, GAMMA, terminal)
 
-    def act(self, state, eps, eval_flag):
+    def act(self, state, eps, eval_mode):
         """Returns actions for given state as per current policy.
 
             state (array_like): current state
@@ -70,7 +71,7 @@ class DQN():
             action_values = self.qnetwork_local(state)[0] # [0] 'cause otherwise nested array
         self.qnetwork_local.train()
 
-        if eval_flag == 0:
+        if not eval_mode:
             # Epsilon-greedy action selection
             # Check if the Q-value distribution is unimodal, if so:
             if self.unimodal_check(action_values) == True:
