@@ -282,7 +282,7 @@ def main():
         agent.episode_memory.append([agent.budget, int(agent.budget_spent_e), agent.wins_e, agent.rewards_e])
 
         # Saving models and history
-        if ((epoch + 1) % 1) == 0:
+        if ((epoch + 1) % 25) == 0:
             PATH = 'models/model_state_{}.tar'.format(epoch+1)
             torch.save({'local_q_model': agent.dqn_agent.qnetwork_local.state_dict(),
                         'target_q_model':agent.dqn_agent.qnetwork_target.state_dict(),
