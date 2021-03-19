@@ -9,7 +9,7 @@ import random
 from collections import namedtuple, deque, defaultdict
 from lru import LRU
 
-from model import Network, set_seed
+from model import *
 
 import torch
 import torch.nn as nn

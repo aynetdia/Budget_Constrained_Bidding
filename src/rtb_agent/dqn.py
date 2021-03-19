@@ -8,7 +8,7 @@ import numpy as np
 import random
 from collections import namedtuple, deque
 
-from model import Network, set_seed
+from model import *
 
 import torch
 import torch.nn as nn

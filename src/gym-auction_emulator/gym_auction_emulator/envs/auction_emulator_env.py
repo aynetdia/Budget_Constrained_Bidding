@@ -95,7 +95,7 @@ class AuctionEmulatorEnv(gym.Env):
 
         self._step += 1
 
-        return next_obs, r, c, win, done
+        return next_obs, r, self.click, c, win, done
 
     def render(self, mode='human', close=False):
         pass

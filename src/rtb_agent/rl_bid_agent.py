@@ -25,21 +25,29 @@ class RlBidAgent():
         cfg = configparser.ConfigParser(allow_no_value=True)
         env_dir = os.path.dirname(__file__)
         cfg.read(env_dir + '/config.cfg')
-        self.T = int(cfg['rl_agent']['T']) # T number of timesteps (4x24 = 96)
+        self.exp_type = str(cfg['experiment_type']['type'])
+        # self.T = int(cfg['rl_agent']['T']) # T number of timesteps (4x24 = 96)
     
     def __init__(self):
+        self._load_config()
         # Beta parameter adjsuting the lambda parameter, that regulates the agent's bid amount
         self.BETA = [-0.08, -0.03, -0.01, 0, 0.01, 0.03, 0.08]
         # Starting value of epsilon in the adaptive eps-greedy policy
         self.eps = 0.9
         # Parameter controlling the annealing speed of epsilon
         self.anneal = 2e-5
-        # DQN Network to learn Q function
-        self.dqn_agent = DQN(state_size = 7, action_size = 7)
-        # Reward Network to learn the reward function
-        self.reward_net = RewardNet(state_action_size = 8, reward_size = 1)
+        if self.exp_type == 'improved_drlb':
+            # DQN Network to learn Q function
+            self.dqn_agent = DQN(state_size = 6, action_size = 7)
+            # Reward Network to learn the reward function
+            self.reward_net = RewardNet(state_action_size = 7, reward_size = 1)
+        else:
+            # DQN Network to learn Q function
+            self.dqn_agent = DQN(state_size = 7, action_size = 7)
+            # Reward Network to learn the reward function
+            self.reward_net = RewardNet(state_action_size = 8, reward_size = 1)
         # Number of timesteps in each episode (4 15min intervals x 24 hours = 96)
-        self.T = 96
+        self.T = 672
         # Initialize the DQN action for t=0 (index 3 - no adjustment of lambda, 0 ind self.BETA)
         self.dqn_action = 3
         self.ctl_lambda = None
@@ -53,6 +61,7 @@ class RlBidAgent():
         self.total_wins = 0
         self.total_rewards = 0
         self.rewards_prev_t = 0
+        self.rewards_prev_t_ratio = 0
         self.rnet_r = 0
         self.wins_e = 0
         self.rewards_e = 0
@@ -61,13 +70,21 @@ class RlBidAgent():
         """
         Returns the state that will be used as input in the DQN
         """
-        return np.asarray([self.t_step, # 1. Current time step
-                self.rem_budget, # 2. the remaining budget at time-step t
-                self.ROL, # 3. The number of Lambda regulation opportunities left
+        if self.exp_type == 'improved_drlb':
+            return np.asarray([self.rem_budget_ratio, # 2. the remaining budget at time-step t
+                self.ROL_ratio, # 3. The number of Lambda regulation opportunities left
                 self.BCR, # 4. Budget consumption rate
-                self.CPM, # 5. Cost per mille of impressions between t-1 and t:
+                self.CPI, # 5. Cost per impression between t-1 and t:
                 self.WR, # 6. Auction win rate at state t
-                self.rewards_prev_t]) # 7. Total clicks at timestep t-1
+                self.rewards_prev_t_ratio]) # 7. Total clicks at timestep t-1
+        else:
+            return np.asarray([self.t_step, # 1. Current time step
+                    self.rem_budget, # 2. the remaining budget at time-step t
+                    self.ROL, # 3. The number of Lambda regulation opportunities left
+                    self.BCR, # 4. Budget consumption rate
+                    self.CPM, # 5. Cost per mille of impressions between t-1 and t:
+                    self.WR, # 6. Auction win rate at state t
+                    self.rewards_prev_t]) # 7. Total clicks at timestep t-1
 
     def _reset_episode(self):
         """
@@ -84,9 +101,11 @@ class RlBidAgent():
         # Set the budget for the episode
         self.budget = self.episode_budgets.pop(0)
         self.rem_budget = self.budget
+        self.rem_budget_ratio = 1
         self.budget_spent_t = 0
         self.budget_spent_e = 0
         self.ROL = self.T # 3. The number of Lambda regulation opportunities left
+        self.ROL_ratio = 1
         self.cur_day = 0
         self.cur_min = 0
         self.total_wins += self.rewards_e
@@ -107,12 +126,18 @@ class RlBidAgent():
         self.t_step += 1
         self.prev_budget = self.rem_budget
         self.rem_budget = self.prev_budget - self.budget_spent_t
+        self.rem_budget_ratio = self.rem_budget / self.budget
         self.budget_spent_e += self.budget_spent_t
         self.ROL -= 1
-        self.BCR = 0 if self.prev_budget == 0 else ((self.rem_budget - self.prev_budget) / self.prev_budget)
-        self.CPM = 0 if self.wins_t == 0 else ((self.cost_t / self.wins_t) * 1000)
+        self.ROL_ratio = self.ROL / self.T
+        self.BCR = 0 if self.prev_budget == 0 else -((self.rem_budget - self.prev_budget) / self.prev_budget)
+        if self.exp_type == 'improved_drlb':
+            self.CPI = 0 if self.wins_t == 0 else (self.cost_t / self.wins_t) / 300
+        else:
+            self.CPM = 0 if self.wins_t == 0 else ((self.cost_t / self.wins_t) * 1000)
         self.WR = self.wins_t / self.imp_opps_t
         self.rewards_prev_t = self.reward_t
+        self.rewards_prev_t_ratio = 1 if self.possible_clicks_t == 0 else self.reward_t / self.possible_clicks_t
         # Adaptive eps-greedy policy
         self.eps = max(0.95 - self.anneal * self.global_T, 0.05)
 
@@ -120,21 +145,27 @@ class RlBidAgent():
         """
         Function to call every time a new time step is entered.
         """
+        self.possible_clicks_t = 0
+        self.total_rewards_t = 0
         self.reward_t = 0
         self.cost_t = 0
         self.wins_t = 0
         self.imp_opps_t = 0
         self.BCR = 0
-        self.CPM = 0
+        if self.exp_type == 'improved_drlb':
+            self.CPI = 0
+        else:
+            self.CPM = 0
         self.WR = 0
         self.budget_spent_t = 0
     
-    def _update_reward_cost(self, bid, reward, cost, win):
+    def _update_reward_cost(self, bid, reward, potential_reward, cost, win):
         """
         Internal function to update reward and action to compute the cumulative
         reward and cost within the given step.
         """
-        if win == True:
+        self.possible_clicks_t += potential_reward
+        if win:
             self.budget_spent_t += bid
             self.wins_t += 1
             self.wins_e += 1
@@ -155,10 +186,10 @@ class RlBidAgent():
 
         if not eval_mode:
             # updates for the RewardNet
-            sa = np.append(self.cur_state, self.dqn_action) # state-action pair for t
+            sa = np.append(self.cur_state, self.BETA[self.dqn_action]) #self.dqn_action) # state-action pair for t
             self.rnet_r = float(self.reward_net.act(sa)) # get reward r_t from RewardNet
             self.reward_net.V += self.reward_t
-            self.reward_net.S.append((self.cur_state, self.dqn_action))
+            self.reward_net.S.append((self.cur_state, self.BETA[self.dqn_action]))
 
             # Store in D1 and sample a mini batch and perform grad-descent step
             self.dqn_agent.step(self.cur_state, self.dqn_action, self.rnet_r, next_state)
@@ -251,12 +282,11 @@ def main():
     set_seed()
     agent = RlBidAgent()
 
-    train_budget = env.bid_requests.payprice.sum()/4
+    train_budget = env.bid_requests.payprice.sum()/8
     # Set budgets for each episode
     budget_proportions = []
     for episode in env.bid_requests.weekday.unique():
         budget_proportions.append(len(env.bid_requests[env.bid_requests.weekday == episode])/env.total_bids)
-    print(env.bid_requests.weekday.unique())
     for i in range(len(budget_proportions)):
         budget_proportions[i] = round(train_budget * budget_proportions[i])
 
@@ -275,8 +305,8 @@ def main():
 
         while not done: # iterate through the whole dataset
             bid = agent.act(obs, eval_mode=False) # Call agent action given each bid request from the env
-            next_obs, cur_reward, cur_cost, win, done = env.step(bid) # Get information from the environment based on the agent's action
-            agent._update_reward_cost(bid, cur_reward, cur_cost, win) # Agent receives reward and cost from the environment
+            next_obs, cur_reward, potential_reward, cur_cost, win, done = env.step(bid) # Get information from the environment based on the agent's action
+            agent._update_reward_cost(bid, cur_reward, potential_reward, cur_cost, win) # Agent receives reward and cost from the environment
             obs = next_obs
         print("Episode Result with Step={} Budget={} Spend={} wins={} rewards={}".format(agent.global_T, agent.budget, int(agent.budget_spent_e), agent.wins_e, agent.rewards_e))
         agent.episode_memory.append([agent.budget, int(agent.budget_spent_e), agent.wins_e, agent.rewards_e])
