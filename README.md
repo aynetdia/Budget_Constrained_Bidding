@@ -1,22 +1,26 @@
 # Ad Tech Budget Constrained Real-Time Bidding (RTB)
 This repo contains the implementation of the DRLB framework introduced by Wu et al. (2018).
 
-## How to Use:
-
-It is set up in such a way that training and (most importantly) testing works from the notebook. 
-
-However, the training of the DRLB can also be done from the console by executing either the sh script as specified below or running the src/rl_bid_agent.py script as a python script. In both latter cases the main method in the script should be uncommented.
-
-Use the following command to run the RL Bidding Agent.
-<br />```bash scripts/run_rl_bid.sh```
-
 ### Configuration parameters
 
 Set the `src/gym_auction_emulator/gym_auction_emulator/envs/config.cfg` accordingly to training or testing mode. Currently it is set to testing mode to allow for tunning the evaluation of the DRLB by our peers.
 
-## Ad Exchange Open AI Gym environment
+The `src/rtb_agent/config.cfg` also has to be adjusted depending on which type of the experiment you want to run. The experiment are pretty self-explanatory, when coupled with the section 5.4 of the seminar paper. 
 
-Open AI Gym environment mimics the Ad Exchange by taking the bid requests from the iPinYou or any other Bidding dataset. The agents can interact with it using the standard Gym API interface.
+## How to Use:
+
+The training of the DRLB can be done from the console by executing either the .sh script as specified below or running the src/rl_bid_agent.py script as a python script, after adjusting the config files.
+
+Use the following command to train the RL Bidding Agent.
+<br />```bash train_rl_bid.sh```
+
+The evaluation can be done by running the evaluation script in the `src/rtb_agent/` folder. The names of the evaluation scripts are tied to the names of the models used in the seminar paper
+
+## Access to data
+
+The iPinYou dataset can be downloaded and preprocessed using the following github repo: https://github.com/wnzhang/make-ipinyou-data
+
+In order to properly run all the experiments the data frames with predicted CTRs can be downloaded from: https://drive.google.com/drive/folders/1dsPV_vDNNdxhy9ZUsk75RX7HowzNsRaC?usp=sharing instead of using the trained logistic regression from `src/rtb_agent/logreg.sav` to get predictions on your own. Then the `data/supplement.ipynb` script can be used to insert the pCTR column into the preprocessed dataset.
 
 ## Repository Citations
 

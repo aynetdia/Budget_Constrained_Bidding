@@ -26,7 +26,7 @@ class RlBidAgent():
         env_dir = os.path.dirname(__file__)
         cfg.read(env_dir + '/config.cfg')
         self.exp_type = str(cfg['experiment_type']['type'])
-        # self.T = int(cfg['rl_agent']['T']) # T number of timesteps (4x24 = 96)
+        self.T = int(cfg[self.exp_type]['T']) # Number of timesteps in each episode
     
     def __init__(self):
         self._load_config()
@@ -36,18 +36,16 @@ class RlBidAgent():
         self.eps = 0.9
         # Parameter controlling the annealing speed of epsilon
         self.anneal = 2e-5
-        if self.exp_type == 'improved_drlb':
+        if self.exp_type in ('improved_drlb', 'improved_drlb_eval'):
             # DQN Network to learn Q function
             self.dqn_agent = DQN(state_size = 6, action_size = 7)
             # Reward Network to learn the reward function
             self.reward_net = RewardNet(state_action_size = 7, reward_size = 1)
         else:
-            # DQN Network to learn Q function
             self.dqn_agent = DQN(state_size = 7, action_size = 7)
-            # Reward Network to learn the reward function
             self.reward_net = RewardNet(state_action_size = 8, reward_size = 1)
         # Number of timesteps in each episode (4 15min intervals x 24 hours = 96)
-        self.T = 672
+        # self.T = 672
         # Initialize the DQN action for t=0 (index 3 - no adjustment of lambda, 0 ind self.BETA)
         self.dqn_action = 3
         self.ctl_lambda = None
@@ -65,18 +63,20 @@ class RlBidAgent():
         self.rnet_r = 0
         self.wins_e = 0
         self.rewards_e = 0
+        self.ROL = self.T
+        self.ROL_ratio = 1
 
     def _get_state(self):
         """
         Returns the state that will be used as input in the DQN
         """
-        if self.exp_type == 'improved_drlb':
-            return np.asarray([self.rem_budget_ratio, # 2. the remaining budget at time-step t
-                self.ROL_ratio, # 3. The number of Lambda regulation opportunities left
+        if self.exp_type in ('improved_drlb', 'improved_drlb_eval'):
+            return np.asarray([self.rem_budget_ratio, # 2. the ratio of the remaining budget to total available budget at time-step t
+                self.ROL_ratio, # 3. The ratio of the number of Lambda regulation opportunities left 
                 self.BCR, # 4. Budget consumption rate
-                self.CPI, # 5. Cost per impression between t-1 and t:
+                self.CPI, # 5. Cost per impression between t-1 and t, in relation to the highest cost possible in the training set (300)
                 self.WR, # 6. Auction win rate at state t
-                self.rewards_prev_t_ratio]) # 7. Total clicks at timestep t-1
+                self.rewards_prev_t_ratio]) # 7. Ratio of acquired/total clicks at timestep t-1
         else:
             return np.asarray([self.t_step, # 1. Current time step
                     self.rem_budget, # 2. the remaining budget at time-step t
@@ -84,7 +84,7 @@ class RlBidAgent():
                     self.BCR, # 4. Budget consumption rate
                     self.CPM, # 5. Cost per mille of impressions between t-1 and t:
                     self.WR, # 6. Auction win rate at state t
-                    self.rewards_prev_t]) # 7. Total clicks at timestep t-1
+                    self.rewards_prev_t]) # 7. Clicks acquired at timestep t-1
 
     def _reset_episode(self):
         """
@@ -93,9 +93,14 @@ class RlBidAgent():
         # Reset the count of time steps
         self.t_step = 0
         # Lambda regulation parameter - set according to the greedy approximation algorithm, as suggested by the paper
-        # self.ctl_lambda = 0.01 if self.budget is None else self.calc_greedy(self.greedy_memory, self.budget)
-        # Clean up the array used to save all the necessary information to solve the knapsack problem with the GA algo
-        self.greedy_memory = []
+        if self.exp_type == 'vanilla_drlb':
+            self.ctl_lambda = 0.01 if self.budget is None else self.calc_greedy(self.greedy_memory, self.budget)
+            # Clean up the array used to save all the necessary information to solve the knapsack problem with the GA algo
+            self.greedy_memory = []
+        elif self.exp_type == 'episode_lambda':
+            self.ctl_lambda = 0.01
+        else:
+            pass
         # Next episode -> next step
         self._reset_step()
         # Set the budget for the episode
@@ -104,8 +109,9 @@ class RlBidAgent():
         self.rem_budget_ratio = 1
         self.budget_spent_t = 0
         self.budget_spent_e = 0
-        self.ROL = self.T # 3. The number of Lambda regulation opportunities left
-        self.ROL_ratio = 1
+        if self.exp_type not in ('free_lambda', 'free_lambda_eval', 'improved_drlb', 'improved_drlb_eval'):
+            self.ROL = self.T # 3. The number of Lambda regulation opportunities left
+            self.ROL_ratio = 1
         self.cur_day = 0
         self.cur_min = 0
         self.total_wins += self.rewards_e
@@ -126,18 +132,18 @@ class RlBidAgent():
         self.t_step += 1
         self.prev_budget = self.rem_budget
         self.rem_budget = self.prev_budget - self.budget_spent_t
-        self.rem_budget_ratio = self.rem_budget / self.budget
         self.budget_spent_e += self.budget_spent_t
+        self.rewards_prev_t = self.reward_t
         self.ROL -= 1
-        self.ROL_ratio = self.ROL / self.T
         self.BCR = 0 if self.prev_budget == 0 else -((self.rem_budget - self.prev_budget) / self.prev_budget)
-        if self.exp_type == 'improved_drlb':
+        if self.exp_type in ('improved_drlb', 'improved_drlb_eval'):
             self.CPI = 0 if self.wins_t == 0 else (self.cost_t / self.wins_t) / 300
+            self.rewards_prev_t_ratio = 1 if self.possible_clicks_t == 0 else self.reward_t / self.possible_clicks_t
+            self.ROL_ratio = self.ROL / self.T
+            self.rem_budget_ratio = self.rem_budget / self.budget
         else:
             self.CPM = 0 if self.wins_t == 0 else ((self.cost_t / self.wins_t) * 1000)
         self.WR = self.wins_t / self.imp_opps_t
-        self.rewards_prev_t = self.reward_t
-        self.rewards_prev_t_ratio = 1 if self.possible_clicks_t == 0 else self.reward_t / self.possible_clicks_t
         # Adaptive eps-greedy policy
         self.eps = max(0.95 - self.anneal * self.global_T, 0.05)
 
@@ -152,7 +158,7 @@ class RlBidAgent():
         self.wins_t = 0
         self.imp_opps_t = 0
         self.BCR = 0
-        if self.exp_type == 'improved_drlb':
+        if self.exp_type in ('improved_drlb', 'improved_drlb_eval'):
             self.CPI = 0
         else:
             self.CPM = 0
@@ -166,7 +172,7 @@ class RlBidAgent():
         """
         self.possible_clicks_t += potential_reward
         if win:
-            self.budget_spent_t += bid
+            self.budget_spent_t += cost
             self.wins_t += 1
             self.wins_e += 1
             self.total_wins += 1
@@ -228,7 +234,7 @@ class RlBidAgent():
                     max_r = max(self.reward_net.get_from_M(sa), self.reward_net.V)
                     self.reward_net.add_to_M(sa, max_r)
                     self.reward_net.add(sa, max_r)
-            print("Episode Result with Step={} Budget={} Spend={} wins={} rewards={}".format(self.global_T, self.budget, int(self.budget_spent_e), self.wins_e, self.rewards_e))
+            print("Episode Result with Step={} Budget={} Spend={} impressions={} clicks={}".format(self.global_T, int(self.budget), int(self.budget_spent_e), self.wins_e, self.rewards_e))
             # Save history
             self.episode_memory.append([self.budget, int(self.budget_spent_e), self.wins_e, self.rewards_e])
             self._reset_episode() 
@@ -238,7 +244,8 @@ class RlBidAgent():
         self.imp_opps_t += 1
         bid = self.calc_bid(obs['pCTR'])
 
-        self.greedy_memory.append([obs['pCTR'], obs['payprice'], obs['pCTR']/max(obs['payprice'], 1)])
+        if self.exp_type == 'vanilla_drlb':
+            self.greedy_memory.append([obs['pCTR'], obs['payprice'], obs['pCTR']/max(obs['payprice'], 1)])
 
         return bid
 
@@ -297,7 +304,8 @@ def main():
         print("Epoch: ", epoch+1)
         obs, done = env.reset()
         agent.episode_budgets = budget_proportions.copy()
-        agent.ctl_lambda = 0.01
+        if agent.exp_type in ('free_lambda', 'improved_drlb'):
+            agent.ctl_lambda = 0.01
         agent._reset_episode()
         agent.cur_day = obs['weekday']
         agent.cur_hour = obs['hour']
@@ -308,7 +316,7 @@ def main():
             next_obs, cur_reward, potential_reward, cur_cost, win, done = env.step(bid) # Get information from the environment based on the agent's action
             agent._update_reward_cost(bid, cur_reward, potential_reward, cur_cost, win) # Agent receives reward and cost from the environment
             obs = next_obs
-        print("Episode Result with Step={} Budget={} Spend={} wins={} rewards={}".format(agent.global_T, agent.budget, int(agent.budget_spent_e), agent.wins_e, agent.rewards_e))
+        print("Episode Result with Step={} Budget={} Spend={} impressions={} clicks={}".format(agent.global_T, int(agent.budget), int(agent.budget_spent_e), agent.wins_e, agent.rewards_e))
         agent.episode_memory.append([agent.budget, int(agent.budget_spent_e), agent.wins_e, agent.rewards_e])
 
         # Saving models and history
